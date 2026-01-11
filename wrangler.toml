@@ -1,0 +1,7 @@
+name = "cargo-client-dashboard"
+compatibility_date = "2024-12-01"
+
+pages_build_output_dir = ".vercel/output/static"
+
+[vars]
+API_BASE_URL = "https://cargo-api.workers.dev"
