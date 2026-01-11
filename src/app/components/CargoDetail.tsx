@@ -1,6 +1,8 @@
 import { ArrowRight, Ship, Clock, Check, Circle, FileText, Upload, Download, TriangleAlert, ChevronRight } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
+import { insertClientDocument } from '../api/client';
 
 interface CargoDetailProps {
   cargoId: string;
@@ -120,6 +122,38 @@ const alerts = [
 ];
 
 export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
+  const [isUploading, setIsUploading] = useState<string | null>(null);
+  const workersEnabled = import.meta.env.VITE_WORKERS_ENABLED === 'true';
+
+  const handleUpload = async (docType: string) => {
+    if (!workersEnabled) {
+      window.alert('Uploads are disabled in preview mode.');
+      return;
+    }
+    const driveUrl = window.prompt('Paste Google Drive URL');
+    if (!driveUrl) return;
+
+    const userId = window.localStorage.getItem('cargo_user_id');
+    if (!userId) {
+      window.alert('Missing user id (cargo_user_id).');
+      return;
+    }
+
+    try {
+      setIsUploading(docType);
+      await insertClientDocument({
+        userId,
+        cargoId,
+        documentType: docType,
+        driveUrl,
+      });
+      window.alert('Document submitted');
+    } catch (e) {
+      window.alert(String(e));
+    } finally {
+      setIsUploading(null);
+    }
+  };
   return (
     <div className="min-h-screen bg-[#f8fafc]">
       {/* Header */}
@@ -267,9 +301,15 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
                             size="sm"
                             variant="outline"
                             className="border-[#e2e8f0] text-[#0a1628] hover:bg-[#f8fafc]"
+                            onClick={() => handleUpload(doc.type)}
+                            disabled={!workersEnabled || isUploading === doc.type}
                           >
                             <Upload className="size-4 mr-2" />
-                            Upload
+                            {!workersEnabled
+                              ? 'Disabled'
+                              : isUploading === doc.type
+                                ? 'Uploading…'
+                                : 'Upload'}
                           </Button>
                         ) : (
                           <Button
