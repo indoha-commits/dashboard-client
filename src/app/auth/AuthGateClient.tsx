@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { getSupabase, setSessionFromUrlHash } from './supabase';
 
-const authPortalUrl = (import.meta.env.VITE_AUTH_PORTAL_URL as string | undefined) ?? 'http://localhost:5175';
+const authPortalUrl = import.meta.env.VITE_AUTH_PORTAL_URL as string | undefined;
+if (!authPortalUrl) {
+  throw new Error('Missing required env var: VITE_AUTH_PORTAL_URL');
+}
 
 export function AuthGateClient({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);

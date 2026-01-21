@@ -14,11 +14,15 @@ function getApiBaseUrl(): string {
 }
 
 function getInternalDashboardUrl(): string {
-  return (import.meta.env.VITE_INTERNAL_DASHBOARD_URL as string | undefined) ?? 'http://localhost:5173';
+  const url = import.meta.env.VITE_INTERNAL_DASHBOARD_URL as string | undefined;
+  if (!url) throw new Error('Missing required env var: VITE_INTERNAL_DASHBOARD_URL');
+  return url;
 }
 
 function getClientDashboardUrl(): string {
-  return (import.meta.env.VITE_CLIENT_DASHBOARD_URL as string | undefined) ?? 'http://localhost:5174';
+  const url = import.meta.env.VITE_CLIENT_DASHBOARD_URL as string | undefined;
+  if (!url) throw new Error('Missing required env var: VITE_CLIENT_DASHBOARD_URL');
+  return url;
 }
 
 export async function redirectAfterLogin(): Promise<void> {

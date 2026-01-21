@@ -43,7 +43,10 @@ export default function App() {
 
   if (!authenticated) {
     // Redirect to dedicated auth portal (neutral login page)
-    const authPortalUrl = (import.meta.env.VITE_AUTH_PORTAL_URL as string | undefined) ?? 'http://localhost:5175';
+    const authPortalUrl = import.meta.env.VITE_AUTH_PORTAL_URL as string | undefined;
+    if (!authPortalUrl) {
+      throw new Error('Missing required env var: VITE_AUTH_PORTAL_URL');
+    }
     window.location.href = authPortalUrl;
     return null;
   }
