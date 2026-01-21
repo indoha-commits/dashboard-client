@@ -47,6 +47,12 @@ type UiTimelineEvent = {
   completed: boolean;
 };
 
+type NextRequiredActionInfo = {
+  title: string;
+  subtitle?: string;
+  raw: string;
+};
+
 const mockTimelineEvents: UiTimelineEvent[] = [
   {
     date: '2024-12-25',
@@ -150,6 +156,77 @@ function mapEventsToTimeline(events: ClientCargoDetail['events']): UiTimelineEve
     });
 }
 
+function formatFriendlyDate(value: string | null | undefined): string {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' });
+}
+
+function maxIso(...values: Array<string | null | undefined>): string | null {
+  const best = values
+    .filter((v): v is string => Boolean(v))
+    .map((v) => ({ raw: v, t: Date.parse(v) }))
+    .filter((v) => !Number.isNaN(v.t))
+    .sort((a, b) => b.t - a.t)[0];
+  return best?.raw ?? null;
+}
+
+function getNextRequiredActionInfo(rawAction: string): NextRequiredActionInfo {
+  // UI-only mapping: keep raw enum available, but present client-friendly wording.
+  switch (rawAction) {
+    case 'OPS_INSERT_PORT_OFFLOADED':
+      return {
+        title: 'Waiting for Port Offloading Confirmation',
+        subtitle: '(Ops)',
+        raw: rawAction,
+      };
+    case 'CLIENT_UPLOAD_REQUIRED_DOCUMENTS':
+      return {
+        title: 'Waiting for Required Documents',
+        subtitle: '(You)',
+        raw: rawAction,
+      };
+    case 'COMPLETE':
+      return {
+        title: 'No action required',
+        raw: rawAction,
+      };
+    default:
+      // Soft fallback: make enums readable without exposing raw as the primary label.
+      return {
+        title: rawAction
+          .replace(/^CLIENT_/, '')
+          .replace(/^OPS_/, '')
+          .replace(/_/g, ' ')
+          .toLowerCase()
+          .replace(/^\w/, (c) => c.toUpperCase()),
+        raw: rawAction,
+      };
+  }
+}
+
+function computeSlaHint(eta: string | null | undefined): { label: string; tone: 'ok' | 'risk' } | null {
+  if (!eta) return null;
+  const etaTime = Date.parse(eta);
+  if (Number.isNaN(etaTime)) return null;
+
+  const msRemaining = etaTime - Date.now();
+  const abs = Math.abs(msRemaining);
+  const hours = Math.round(abs / (1000 * 60 * 60));
+  const days = Math.floor(abs / (1000 * 60 * 60 * 24));
+
+  const remainingText = msRemaining >= 0 ? 'remaining' : 'overdue';
+  const timeText = days >= 2 ? `${days} days ${remainingText}` : `${hours} hours ${remainingText}`;
+
+  // Enterprise-safe heuristic: < 24h is "At Risk".
+  const atRisk = msRemaining >= 0 && msRemaining <= 24 * 60 * 60 * 1000;
+  return {
+    label: `SLA: ${atRisk ? 'At Risk' : 'On Track'} (${timeText})`,
+    tone: atRisk ? 'risk' : 'ok',
+  };
+}
+
 export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
   const workersEnabled = import.meta.env.VITE_WORKERS_ENABLED === 'true';
 
@@ -161,6 +238,7 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
   const [isUploading, setIsUploading] = useState<string | null>(null);
   const [uploadDocType, setUploadDocType] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [timelineExpanded, setTimelineExpanded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -195,6 +273,22 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
   }, [cargoId, workersEnabled]);
 
   const nextRequiredAction = detail?.projection?.next_required_action ?? 'CLIENT_UPLOAD_REQUIRED_DOCUMENTS';
+  const nextRequiredActionInfo = useMemo(() => getNextRequiredActionInfo(nextRequiredAction), [nextRequiredAction]);
+
+  const documentsLastUpdated = useMemo(() => {
+    if (!detail) return null;
+    // Use the freshest doc activity timestamp (verified_at preferred when present).
+    const values = detail.documents.flatMap((d) => [d.verified_at, d.uploaded_at]);
+    return maxIso(...values);
+  }, [detail]);
+
+  const timelineLastUpdated = useMemo(() => {
+    if (!detail) return null;
+    const values = detail.events.flatMap((e) => [e.event_time, e.recorded_at]);
+    return maxIso(...values);
+  }, [detail]);
+
+  const slaHint = useMemo(() => computeSlaHint(detail?.cargo.eta), [detail?.cargo.eta]);
 
   const documents: UiDocument[] = useMemo(() => {
     if (!detail) return mockDocuments;
@@ -400,12 +494,22 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
                 Vessel: {detail?.cargo.vessel ?? 'MSC'}
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col items-end gap-1">
+              <div className="text-xs text-[#64748b] flex items-center gap-1">
+                <TriangleAlert className="size-3 text-[#94a3b8]" />
+                <span>Next Required Action</span>
+              </div>
+
               {loading ? (
                 <Badge className="bg-[#64748b] text-white">Loading…</Badge>
               ) : (
-                <Badge className="bg-[#0ea5e9] text-white">{nextRequiredAction}</Badge>
+                <Badge className="bg-[#0ea5e9] text-white">{nextRequiredActionInfo.title}</Badge>
               )}
+
+              <div className="text-[11px] text-[#94a3b8]">
+                {nextRequiredActionInfo.subtitle ? `${nextRequiredActionInfo.subtitle} · ` : ''}
+                {nextRequiredActionInfo.raw}
+              </div>
             </div>
           </div>
         </div>
@@ -414,14 +518,26 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white border border-[#e2e8f0] rounded-sm p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-[#0a1628]">Required Documents</h3>
-                <div className="text-sm text-[#64748b]">
+                <div>
+                  <h3 className="text-[#0a1628]">Required Documents</h3>
+                  <div className="text-xs text-[#94a3b8] mt-1">
+                    Documents last updated: {formatFriendlyDate(documentsLastUpdated)}
+                  </div>
+                </div>
+                <div className="text-sm text-[#64748b] text-right">
                   {detail
                     ? `${detail.projection.documents.total_verified}/${detail.projection.documents.total_required} verified`
                     : '—'}
                 </div>
               </div>
               <div className="space-y-3">
+                {detail &&
+                  detail.projection.documents.total_required > 0 &&
+                  detail.projection.documents.total_verified === detail.projection.documents.total_required && (
+                    <div className="text-sm text-[#64748b]">
+                      All required documents are verified. No action needed.
+                    </div>
+                  )}
                 {documents.map((doc) => (
                   <div
                     key={doc.id}
@@ -578,52 +694,84 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
             </div>
 
             <div className="bg-white border border-[#e2e8f0] rounded-sm p-6">
-              <h3 className="text-[#0a1628] mb-4">Shipment Timeline</h3>
-              <div className="space-y-4">
-                {(timelineEvents.length ? timelineEvents : mockTimelineEvents).map((event, index, arr) => (
-                  <div key={index} className="relative">
-                    {index < arr.length - 1 && (
-                      <div
-                        className={`absolute left-[11px] top-6 w-px h-full ${event.completed ? 'bg-[#10b981]' : 'bg-[#e2e8f0]'}`}
-                      />
-                    )}
-                    <div className="flex gap-4">
-                      <div className="flex flex-col items-center">
-                        {event.completed ? (
-                          <div className="size-6 rounded-full bg-[#10b981] flex items-center justify-center">
-                            <Check className="size-4 text-white" />
-                          </div>
-                        ) : (
-                          <div className="size-6 rounded-full border-2 border-[#e2e8f0] flex items-center justify-center">
-                            <Circle className="size-2 text-[#64748b] fill-current" />
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex-1 pb-4">
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="text-[#0a1628]">{event.status}</div>
-                          <div className="text-sm text-[#64748b] flex items-center gap-1">
-                            <Clock className="size-3" />
-                            {event.date} {event.time}
-                          </div>
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h3 className="text-[#0a1628]">Shipment Timeline</h3>
+                  <div className="text-xs text-[#94a3b8] mt-1">
+                    Timeline last updated: {formatFriendlyDate(timelineLastUpdated)}
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-[#64748b] hover:text-[#0a1628] hover:bg-[#f8fafc]"
+                  onClick={() => setTimelineExpanded((v) => !v)}
+                >
+                  {timelineExpanded ? 'Collapse' : 'Expand Timeline'}
+                </Button>
+              </div>
+              {timelineExpanded && (
+                <div className="space-y-4">
+                  {(timelineEvents.length ? timelineEvents : mockTimelineEvents).map((event, index, arr) => (
+                    <div key={index} className="relative">
+                      {index < arr.length - 1 && (
+                        <div
+                          className={`absolute left-[11px] top-6 w-px h-full ${event.completed ? 'bg-[#10b981]' : 'bg-[#e2e8f0]'}`}
+                        />
+                      )}
+                      <div className="flex gap-4">
+                        <div className="flex flex-col items-center">
+                          {event.completed ? (
+                            <div className="size-6 rounded-full bg-[#10b981] flex items-center justify-center">
+                              <Check className="size-4 text-white" />
+                            </div>
+                          ) : (
+                            <div className="size-6 rounded-full border-2 border-[#e2e8f0] flex items-center justify-center">
+                              <Circle className="size-2 text-[#64748b] fill-current" />
+                            </div>
+                          )}
                         </div>
-                        <div className="text-sm text-[#64748b]">{event.location}</div>
+                        <div className="flex-1 pb-4">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="text-[#0a1628]">{event.status}</div>
+                            <div className="text-sm text-[#64748b] flex items-center gap-1">
+                              <Clock className="size-3" />
+                              {event.date} {event.time}
+                            </div>
+                          </div>
+                          <div className="text-sm text-[#64748b]">{event.location}</div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
           <div className="space-y-6">
             <div className="bg-white border border-[#e2e8f0] rounded-sm p-6">
-              <h3 className="text-[#0a1628] mb-4">Action Required</h3>
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <h3 className="text-[#0a1628]">Action Required</h3>
+                  <div className="text-xs text-[#94a3b8] mt-1">Next Required Action</div>
+                </div>
+              </div>
+
               <div className="flex items-start gap-3 p-4 bg-[#fef3c7] border border-[#f59e0b] rounded-sm">
                 <TriangleAlert className="size-5 text-[#f59e0b] mt-0.5" />
-                <div>
-                  <div className="text-[#0a1628] mb-1">{nextRequiredAction}</div>
-                  <div className="text-sm text-[#64748b]">
+                <div className="min-w-0">
+                  <div className="text-[#0a1628]" style={{ fontWeight: 600 }}>
+                    {nextRequiredActionInfo.title}{' '}
+                    {nextRequiredActionInfo.subtitle ? (
+                      <span className="text-[#64748b]" style={{ fontWeight: 500 }}>
+                        {nextRequiredActionInfo.subtitle}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="text-xs text-[#94a3b8] mt-1">{nextRequiredActionInfo.raw}</div>
+                  <div className="text-sm text-[#64748b] mt-2">
                     {workersEnabled
                       ? 'Derived from facts (documents + events).'
                       : 'Preview mode (mock).'}
@@ -637,7 +785,11 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
               <div className="space-y-3">
                 <div className="p-4 border border-[#e2e8f0] rounded-sm">
                   <div className="text-[#0a1628] mb-1">Next required action</div>
-                  <div className="text-sm text-[#64748b]">{nextRequiredAction}</div>
+                  <div className="text-sm text-[#64748b]">
+                    {nextRequiredActionInfo.title}{' '}
+                    {nextRequiredActionInfo.subtitle ? nextRequiredActionInfo.subtitle : ''}
+                  </div>
+                  <div className="text-xs text-[#94a3b8] mt-1">{nextRequiredActionInfo.raw}</div>
                 </div>
               </div>
             </div>
@@ -657,6 +809,14 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
                   <span className="text-[#64748b]">ETA</span>
                   <span className="text-[#0a1628]">{detail?.cargo.eta ?? '—'}</span>
                 </div>
+                {slaHint && (
+                  <div className="flex justify-between">
+                    <span className="text-[#64748b]">SLA</span>
+                    <span className={slaHint.tone === 'risk' ? 'text-[#b45309]' : 'text-[#0a1628]'}>
+                      {slaHint.label.replace(/^SLA:\s*/, '')}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>

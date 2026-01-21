@@ -47,8 +47,8 @@ const mockCargos: CargoRow[] = [
 
 const statusConfig: Record<CargoStatus, { label: string; color: string }> = {
   COMPLETE: { label: 'Complete', color: 'bg-[#10b981] text-white' },
-  CLIENT_ACTION_REQUIRED: { label: 'Client Action', color: 'bg-[#0ea5e9] text-white' },
-  OPS_ACTION_REQUIRED: { label: 'Ops Action', color: 'bg-[#f59e0b] text-white' },
+  CLIENT_ACTION_REQUIRED: { label: 'Waiting on You', color: 'bg-[#0ea5e9] text-white' },
+  OPS_ACTION_REQUIRED: { label: 'Waiting on Ops', color: 'bg-[#f59e0b] text-white' },
   IN_PROGRESS: { label: 'In Progress', color: 'bg-[#64748b] text-white' },
   UNKNOWN: { label: 'Unknown', color: 'bg-[#64748b] text-white' },
 };
