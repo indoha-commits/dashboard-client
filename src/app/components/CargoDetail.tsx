@@ -46,6 +46,7 @@ type UiTimelineEvent = {
   status: string;
   location: string;
   completed: boolean;
+  detail?: string;
 };
 
 type NextRequiredActionInfo = {
@@ -126,6 +127,10 @@ function docDisplayName(documentType: string): string {
   }
 }
 
+function formatLabel(value: string): string {
+  return value.replace(/_/g, ' ').toLowerCase().replace(/(^|\s)\S/g, (s) => s.toUpperCase());
+}
+
 function formatIso(ts: string | null | undefined): { date: string; time: string } {
   if (!ts) return { date: '—', time: '—' };
   const d = new Date(ts);
@@ -150,7 +155,7 @@ function mapEventsToTimeline(events: ClientCargoDetail['events']): UiTimelineEve
       return {
         date,
         time,
-        status: e.event_type,
+        status: formatLabel(e.event_type),
         location: e.location_id ?? '—',
         completed: true,
       };
@@ -158,95 +163,87 @@ function mapEventsToTimeline(events: ClientCargoDetail['events']): UiTimelineEve
 }
 
 function buildDerivedTimeline(detail: ClientCargoDetail, approvals: CargoApproval[]): UiTimelineEvent[] {
-  const out: UiTimelineEvent[] = [];
+  // This mirrors `cargo-internal-dashboard/src/app/components/pages/CargoTimelinePage.tsx`.
+  const events: Array<{ label: string; at: string; detail?: string; completed: boolean }> = [];
 
-  const created = formatIso(detail.cargo.created_at);
-  out.push({
-    date: created.date,
-    time: created.time,
-    status: 'Cargo created',
-    location: '—',
+  // 1) Cargo created
+  events.push({
+    label: 'Cargo created',
+    at: detail.cargo.created_at,
     completed: true,
   });
 
+  // 2) Document-based milestones (bucket evidence)
   const uploadedDocs = detail.documents.filter((d) => d.status === 'UPLOADED' && d.uploaded_at);
   const verifiedDocs = detail.documents.filter((d) => d.status === 'VERIFIED' && d.verified_at);
 
   const earliestUpload = uploadedDocs
     .map((d) => d.uploaded_at as string)
     .sort((a, b) => Date.parse(a) - Date.parse(b))[0];
+
   const latestUpload = uploadedDocs
     .map((d) => d.uploaded_at as string)
     .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
+
   const latestVerified = verifiedDocs
     .map((d) => d.verified_at as string)
     .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
 
   if (earliestUpload) {
-    const t = formatIso(earliestUpload);
-    out.push({
-      date: t.date,
-      time: t.time,
-      status: 'Documents uploaded',
-      location: '—',
+    events.push({
+      label: 'Documents uploaded',
+      at: earliestUpload,
+      detail: 'Files detected in bucket (pre-validation).',
       completed: true,
     });
   }
 
-  const hasPendingValidation = uploadedDocs.length > 0 && verifiedDocs.length === 0;
+  // 3) Validation step (explicit when we see bucket uploads without verification)
+  const hasUploaded = detail.documents.some((d) => d.status === 'UPLOADED');
+  const hasAnyVerified = detail.documents.some((d) => d.status === 'VERIFIED');
+  const hasPendingValidation = hasUploaded && !hasAnyVerified;
+
   if (hasPendingValidation) {
-    const t = formatIso(latestUpload ?? earliestUpload ?? detail.cargo.created_at);
-    out.push({
-      date: t.date,
-      time: t.time,
-      status: 'Validation in progress',
-      location: '—',
+    events.push({
+      label: 'Validation in progress',
+      at: latestUpload ?? earliestUpload ?? detail.cargo.created_at,
+      detail: 'Documents are present in the bucket and awaiting verification.',
       completed: false,
     });
   }
 
   if (latestVerified) {
-    const t = formatIso(latestVerified);
-    out.push({
-      date: t.date,
-      time: t.time,
-      status: 'Documents verified',
-      location: '—',
+    events.push({
+      label: 'Documents verified',
+      at: latestVerified,
       completed: true,
     });
   }
 
-  // Draft/Assessment approvals
+  // 4) Approvals (draft/assessment) visibility
   for (const a of approvals) {
-    const label = a.kind === 'DECLARATION_DRAFT' ? 'Declaration draft' : 'Assessment';
-    const when = a.decided_at ?? a.created_at;
-    const t = formatIso(when);
-    const statusText = a.status.toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
-
-    out.push({
-      date: t.date,
-      time: t.time,
-      status: `${label} ${statusText}`,
-      location: '—',
+    events.push({
+      label: `${formatLabel(a.kind)} ${formatLabel(a.status)}`,
+      at: a.decided_at ?? a.created_at,
+      detail: a.decided_at ? `Decided ${new Date(a.decided_at).toLocaleString()}` : 'Awaiting decision',
       completed: a.status !== 'PENDING',
     });
   }
 
-  // Sort chronologically, de-dup by status+date+time
-  const seen = new Set<string>();
-  return out
-    .slice()
-    .filter((e) => {
-      const key = `${e.status}|${e.date}|${e.time}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => {
-      const at = Date.parse(`${a.date}T${a.time.replace(' UTC', '')}:00Z`);
-      const bt = Date.parse(`${b.date}T${b.time.replace(' UTC', '')}:00Z`);
-      if (!Number.isNaN(at) && !Number.isNaN(bt)) return at - bt;
-      return 0;
+  // Sort chronologically
+  return events
+    .filter((e) => !Number.isNaN(Date.parse(e.at)))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+    .map((ev) => {
+      const t = formatIso(ev.at);
+      return {
+        date: t.date,
+        time: t.time,
+        status: ev.label,
+        location: '—',
+        completed: ev.completed,
+        detail: ev.detail,
+      };
     });
 }
 
@@ -401,10 +398,10 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
     const mapped = mapEventsToTimeline(detail.events);
     if (mapped.length) return mapped;
 
-    // Legacy cargos created before milestone events: derive a simple timeline from documents.
+    // No milestone events recorded: show the same derived timeline as internal ops.
     const derived = buildDerivedTimeline(detail, approvals);
     return derived.length ? derived : mockTimelineEvents;
-  }, [detail]);
+  }, [detail, approvals]);
 
   const handleApprovalApprove = async (approvalId: string) => {
     try {
@@ -847,6 +844,7 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
                             </div>
                           </div>
                           <div className="text-sm text-[#64748b]">{event.location}</div>
+                          {event.detail && <div className="text-xs text-[#94a3b8] mt-1">{event.detail}</div>}
                         </div>
                       </div>
                     </div>
