@@ -37,6 +37,7 @@ type UiDocument = {
   type: string;
   status: 'uploaded' | 'pending' | 'verified';
   uploadedDate?: string;
+  driveUrl?: string;
 };
 
 type UiTimelineEvent = {
@@ -153,6 +154,99 @@ function mapEventsToTimeline(events: ClientCargoDetail['events']): UiTimelineEve
         location: e.location_id ?? '—',
         completed: true,
       };
+    });
+}
+
+function buildDerivedTimeline(detail: ClientCargoDetail, approvals: CargoApproval[]): UiTimelineEvent[] {
+  const out: UiTimelineEvent[] = [];
+
+  const created = formatIso(detail.cargo.created_at);
+  out.push({
+    date: created.date,
+    time: created.time,
+    status: 'Cargo created',
+    location: '—',
+    completed: true,
+  });
+
+  const uploadedDocs = detail.documents.filter((d) => d.status === 'UPLOADED' && d.uploaded_at);
+  const verifiedDocs = detail.documents.filter((d) => d.status === 'VERIFIED' && d.verified_at);
+
+  const earliestUpload = uploadedDocs
+    .map((d) => d.uploaded_at as string)
+    .sort((a, b) => Date.parse(a) - Date.parse(b))[0];
+  const latestUpload = uploadedDocs
+    .map((d) => d.uploaded_at as string)
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
+  const latestVerified = verifiedDocs
+    .map((d) => d.verified_at as string)
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
+
+  if (earliestUpload) {
+    const t = formatIso(earliestUpload);
+    out.push({
+      date: t.date,
+      time: t.time,
+      status: 'Documents uploaded',
+      location: '—',
+      completed: true,
+    });
+  }
+
+  const hasPendingValidation = uploadedDocs.length > 0 && verifiedDocs.length === 0;
+  if (hasPendingValidation) {
+    const t = formatIso(latestUpload ?? earliestUpload ?? detail.cargo.created_at);
+    out.push({
+      date: t.date,
+      time: t.time,
+      status: 'Validation in progress',
+      location: '—',
+      completed: false,
+    });
+  }
+
+  if (latestVerified) {
+    const t = formatIso(latestVerified);
+    out.push({
+      date: t.date,
+      time: t.time,
+      status: 'Documents verified',
+      location: '—',
+      completed: true,
+    });
+  }
+
+  // Draft/Assessment approvals
+  for (const a of approvals) {
+    const label = a.kind === 'DECLARATION_DRAFT' ? 'Declaration draft' : 'Assessment';
+    const when = a.decided_at ?? a.created_at;
+    const t = formatIso(when);
+    const statusText = a.status.toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+
+    out.push({
+      date: t.date,
+      time: t.time,
+      status: `${label} ${statusText}`,
+      location: '—',
+      completed: a.status !== 'PENDING',
+    });
+  }
+
+  // Sort chronologically, de-dup by status+date+time
+  const seen = new Set<string>();
+  return out
+    .slice()
+    .filter((e) => {
+      const key = `${e.status}|${e.date}|${e.time}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => {
+      const at = Date.parse(`${a.date}T${a.time.replace(' UTC', '')}:00Z`);
+      const bt = Date.parse(`${b.date}T${b.time.replace(' UTC', '')}:00Z`);
+      if (!Number.isNaN(at) && !Number.isNaN(bt)) return at - bt;
+      return 0;
     });
 }
 
@@ -305,7 +399,11 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
   const timelineEvents: UiTimelineEvent[] = useMemo(() => {
     if (!detail) return mockTimelineEvents;
     const mapped = mapEventsToTimeline(detail.events);
-    return mapped.length ? mapped : [];
+    if (mapped.length) return mapped;
+
+    // Legacy cargos created before milestone events: derive a simple timeline from documents.
+    const derived = buildDerivedTimeline(detail, approvals);
+    return derived.length ? derived : mockTimelineEvents;
   }, [detail]);
 
   const handleApprovalApprove = async (approvalId: string) => {
@@ -586,6 +684,14 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
                           type="button"
                           onClick={async () => {
                             try {
+                              // Same logic as ops:
+                              // - Before VERIFIED, the file is still in the bucket => use signed URL.
+                              // - After VERIFIED, driveUrl is a Google Drive URL => open directly.
+                              if (doc.status === 'verified') {
+                                window.open(doc.driveUrl, '_blank', 'noreferrer');
+                                return;
+                              }
+
                               const { url } = await getClientDocumentSignedUrl(doc.id);
                               window.open(url, '_blank', 'noreferrer');
                             } catch (e) {
@@ -595,7 +701,7 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
                           className="inline-flex items-center text-sm text-[#64748b] hover:text-[#0a1628]"
                         >
                           <Download className="size-4 mr-2" />
-                          Download
+                          View / Download
                         </button>
                       ) : (
                         <Button
@@ -713,7 +819,7 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
               </div>
               {timelineExpanded && (
                 <div className="space-y-4">
-                  {(timelineEvents.length ? timelineEvents : mockTimelineEvents).map((event, index, arr) => (
+                  {timelineEvents.map((event, index, arr) => (
                     <div key={index} className="relative">
                       {index < arr.length - 1 && (
                         <div
