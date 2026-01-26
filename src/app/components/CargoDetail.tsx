@@ -568,6 +568,17 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
         </div>
       </header>
 
+      {/* Full-screen loading overlay */}
+      {loading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-white/40 backdrop-blur-md" />
+          <div className="relative flex flex-col items-center gap-3">
+            <div className="h-10 w-10 rounded-full border-4 border-[#0ea5e9]/25 border-t-[#0ea5e9] animate-spin" />
+            <div className="text-sm text-[#0a1628]">Loading shipment…</div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto px-6 py-8">
         <div className="mb-6">
           <div className="flex items-center gap-2 text-[#64748b] mb-2">
@@ -595,11 +606,9 @@ export function CargoDetail({ cargoId, onBack }: CargoDetailProps) {
                 <span>Next Required Action</span>
               </div>
 
-              {loading ? (
-                <Badge className="bg-[#64748b] text-white">Loading…</Badge>
-              ) : (
-                <Badge className="bg-[#0ea5e9] text-white">{nextRequiredActionInfo.title}</Badge>
-              )}
+              <Badge className="bg-[#0ea5e9] text-white">
+                {detail ? nextRequiredActionInfo.title : '—'}
+              </Badge>
 
               <div className="text-[11px] text-[#94a3b8]">
                 {nextRequiredActionInfo.subtitle ? `${nextRequiredActionInfo.subtitle} · ` : ''}
