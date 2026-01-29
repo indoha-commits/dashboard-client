@@ -1,24 +1,4 @@
-import { getAccessToken } from '../auth/supabase';
-
-// When deploying via Cloudflare Worker API, calls should always go to VITE_API_BASE_URL.
-// Keep this env for optional local preview toggles, but default to enabled.
-const workersEnabled = import.meta.env.VITE_WORKERS_ENABLED !== 'false';
-
-function getBaseUrl(): string {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL;
-  if (!baseUrl) {
-    throw new Error('VITE_API_BASE_URL is not set');
-  }
-  return baseUrl;
-}
-
-function getAuthHeader(): Record<string, string> {
-  const token = getAccessToken();
-  if (!token) {
-    return {};
-  }
-  return { authorization: `Bearer ${token}` };
-}
+import { fetchJson } from './http';
 
 export type InsertClientDocumentInput = {
   cargoId: string;
@@ -28,16 +8,8 @@ export type InsertClientDocumentInput = {
 };
 
 export async function insertClientDocument(input: InsertClientDocumentInput): Promise<{ id: string }> {
-  if (!workersEnabled) {
-    throw new Error('API is disabled (VITE_WORKERS_ENABLED=false)');
-  }
-
-  const res = await fetch(`${getBaseUrl()}/client/documents`, {
+  const data = await fetchJson<{ id: string }>(`/client/documents`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...getAuthHeader(),
-    },
     body: JSON.stringify({
       cargo_id: input.cargoId,
       document_type: input.documentType,
@@ -45,12 +17,6 @@ export async function insertClientDocument(input: InsertClientDocumentInput): Pr
     }),
   });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`insertClientDocument failed: ${res.status} ${text}`);
-  }
-
-  const data = (await res.json()) as { id: string };
   if (!data?.id) {
     throw new Error('insertClientDocument: missing id');
   }
@@ -84,24 +50,7 @@ export type ClientShipmentRow = {
 };
 
 export async function getClientShipments(): Promise<{ shipments: ClientShipmentRow[] }> {
-  if (!workersEnabled) {
-    throw new Error('API is disabled (VITE_WORKERS_ENABLED=false)');
-  }
-
-  const res = await fetch(`${getBaseUrl()}/client/shipments`, {
-    method: 'GET',
-    headers: {
-      'content-type': 'application/json',
-      ...getAuthHeader(),
-    },
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`getClientShipments failed: ${res.status} ${text}`);
-  }
-
-  const data = (await res.json()) as { shipments: ClientShipmentRow[] };
+  const data = await fetchJson<{ shipments: ClientShipmentRow[] }>(`/client/shipments`, { method: 'GET' });
   return { shipments: data?.shipments ?? [] };
 }
 
@@ -146,24 +95,7 @@ export type ClientCargoDetail = {
 };
 
 export async function getClientCargoDetail(cargoId: string): Promise<ClientCargoDetail> {
-  if (!workersEnabled) {
-    throw new Error('API is disabled (VITE_WORKERS_ENABLED=false)');
-  }
-
-  const res = await fetch(`${getBaseUrl()}/client/cargo/${encodeURIComponent(cargoId)}`, {
-    method: 'GET',
-    headers: {
-      'content-type': 'application/json',
-      ...getAuthHeader(),
-    },
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`getClientCargoDetail failed: ${res.status} ${text}`);
-  }
-
-  return (await res.json()) as ClientCargoDetail;
+  return await fetchJson<ClientCargoDetail>(`/client/cargo/${encodeURIComponent(cargoId)}`, { method: 'GET' });
 }
 
 export type CargoApproval = {
@@ -185,67 +117,25 @@ export type CargoApproval = {
 };
 
 export async function getClientCargoApprovals(cargoId: string): Promise<{ approvals: CargoApproval[] }> {
-  if (!workersEnabled) {
-    throw new Error('API is disabled (VITE_WORKERS_ENABLED=false)');
-  }
-
-  const res = await fetch(`${getBaseUrl()}/client/cargo/${encodeURIComponent(cargoId)}/approvals`, {
-    method: 'GET',
-    headers: {
-      'content-type': 'application/json',
-      ...getAuthHeader(),
-    },
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`getClientCargoApprovals failed: ${res.status} ${text}`);
-  }
-
-  const data = (await res.json()) as { approvals: CargoApproval[] };
+  const data = await fetchJson<{ approvals: CargoApproval[] }>(
+    `/client/cargo/${encodeURIComponent(cargoId)}/approvals`,
+    { method: 'GET' }
+  );
   return { approvals: data?.approvals ?? [] };
 }
 
 export async function getClientApprovalSignedUrl(approvalId: string): Promise<{ url: string; kind: 'storage' | 'drive' }> {
-  if (!workersEnabled) {
-    throw new Error('API is disabled (VITE_WORKERS_ENABLED=false)');
-  }
-
-  const res = await fetch(`${getBaseUrl()}/client/approvals/${encodeURIComponent(approvalId)}/signed-url`, {
-    method: 'GET',
-    headers: {
-      'content-type': 'application/json',
-      ...getAuthHeader(),
-    },
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`getClientApprovalSignedUrl failed: ${res.status} ${text}`);
-  }
-
-  return (await res.json()) as { url: string; kind: 'storage' | 'drive' };
+  return await fetchJson<{ url: string; kind: 'storage' | 'drive' }>(
+    `/client/approvals/${encodeURIComponent(approvalId)}/signed-url`,
+    { method: 'GET' }
+  );
 }
 
 export async function getClientDocumentSignedUrl(documentId: string): Promise<{ url: string; kind: 'storage' | 'drive' }> {
-  if (!workersEnabled) {
-    throw new Error('API is disabled (VITE_WORKERS_ENABLED=false)');
-  }
-
-  const res = await fetch(`${getBaseUrl()}/client/documents/${encodeURIComponent(documentId)}/signed-url`, {
-    method: 'GET',
-    headers: {
-      'content-type': 'application/json',
-      ...getAuthHeader(),
-    },
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`getClientDocumentSignedUrl failed: ${res.status} ${text}`);
-  }
-
-  return (await res.json()) as { url: string; kind: 'storage' | 'drive' };
+  return await fetchJson<{ url: string; kind: 'storage' | 'drive' }>(
+    `/client/documents/${encodeURIComponent(documentId)}/signed-url`,
+    { method: 'GET' }
+  );
 }
 
 export async function createClientDocumentUploadUrl(input: {
@@ -253,66 +143,25 @@ export async function createClientDocumentUploadUrl(input: {
   documentType: string;
   fileName: string;
 }): Promise<{ path: string; signed_url: string; expires_in: number }> {
-  if (!workersEnabled) {
-    throw new Error('API is disabled (VITE_WORKERS_ENABLED=false)');
-  }
-
-  const res = await fetch(`${getBaseUrl()}/client/cargo/${encodeURIComponent(input.cargoId)}/upload-url`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...getAuthHeader(),
-    },
-    body: JSON.stringify({ document_type: input.documentType, file_name: input.fileName }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`createClientDocumentUploadUrl failed: ${res.status} ${text}`);
-  }
-
-  return (await res.json()) as { path: string; signed_url: string; expires_in: number };
+  return await fetchJson<{ path: string; signed_url: string; expires_in: number }>(
+    `/client/cargo/${encodeURIComponent(input.cargoId)}/upload-url`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ document_type: input.documentType, file_name: input.fileName }),
+    }
+  );
 }
 
 export async function approveClientCargoApproval(approvalId: string): Promise<{ approval: CargoApproval }> {
-  if (!workersEnabled) {
-    throw new Error('API is disabled (VITE_WORKERS_ENABLED=false)');
-  }
-
-  const res = await fetch(`${getBaseUrl()}/client/approvals/${encodeURIComponent(approvalId)}/approve`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...getAuthHeader(),
-    },
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`approveClientCargoApproval failed: ${res.status} ${text}`);
-  }
-
-  return (await res.json()) as { approval: CargoApproval };
+  return await fetchJson<{ approval: CargoApproval }>(
+    `/client/approvals/${encodeURIComponent(approvalId)}/approve`,
+    { method: 'POST' }
+  );
 }
 
 export async function rejectClientCargoApproval(approvalId: string, rejectionReason: string): Promise<{ approval: CargoApproval }> {
-  if (!workersEnabled) {
-    throw new Error('API is disabled (VITE_WORKERS_ENABLED=false)');
-  }
-
-  const res = await fetch(`${getBaseUrl()}/client/approvals/${encodeURIComponent(approvalId)}/reject`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...getAuthHeader(),
-    },
-    body: JSON.stringify({ rejection_reason: rejectionReason }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`rejectClientCargoApproval failed: ${res.status} ${text}`);
-  }
-
-  return (await res.json()) as { approval: CargoApproval };
+  return await fetchJson<{ approval: CargoApproval }>(
+    `/client/approvals/${encodeURIComponent(approvalId)}/reject`,
+    { method: 'POST', body: JSON.stringify({ rejection_reason: rejectionReason }) }
+  );
 }
